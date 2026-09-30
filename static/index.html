@@ -1,0 +1,34 @@
+<!doctype html><meta charset=utf-8><meta name=viewport content="width=device-width,initial-scale=1"><title>Vault</title>
+<style>:root{--bg:#fff;--fg:#111;--bd:#ddd}@media(prefers-color-scheme:dark){:root{--bg:#111;--fg:#eee;--bd:#333}}
+body{font:14px system-ui;background:var(--bg);color:var(--fg);max-width:780px;margin:2rem auto;padding:0 1rem}
+input,button,select{font:inherit;padding:.4rem;margin:.15rem}section{border:1px solid var(--bd);border-radius:8px;padding:1rem;margin:1rem 0}
+table{width:100%;border-collapse:collapse}td{border-bottom:1px solid var(--bd);padding:.3rem}.err{color:#d33}.mono{font-family:monospace}</style>
+<h1>🔐 Vault</h1><div id=msg class=err></div>
+<section id=login><b>Sign in</b><br><input id=u placeholder=username autocomplete=username><input id=p type=password placeholder="master password" autocomplete=current-password>
+<input id=t placeholder="2FA code (if enabled)" size=8><button onclick="auth('login')">Unlock</button><button onclick="auth('register')">Create vault</button>
+<div><small>Creating a vault needs a strong master password (score ≥ 3). There is no recovery if you forget it.</small></div></section>
+<div id=app hidden>
+<section>Signed in as <b id=who></b> · auto-locks in <b id=left></b>s <button onclick=lock()>🔒 Lock now</button></section>
+<section><b>Add entry</b><br><input id=s placeholder=site><input id=eu placeholder=username><input id=ep placeholder=password oninput=meter()>
+<button onclick=gen()>Generate</button> <span id=m></span><br><input id=tg placeholder="tags (comma separated)"><input id=no placeholder=notes size=30><button onclick=add()>Save</button></section>
+<section><b>Search</b> <input id=q placeholder="search site / user / tag" oninput=load()><table id=list></table></section>
+<section><b>Audit log</b> <button onclick=aud()>Refresh</button> <button onclick=ver()>Verify chain</button><pre id=au></pre></section></div>
+<script>
+let T="",tick;const $=i=>document.getElementById(i),H=()=>({"content-type":"application/json",Authorization:"Bearer "+T});
+async function j(u,o={}){const r=await fetch(u,{headers:H(),...o});const d=await r.json().catch(()=>({}));
+ if(r.status==401&&T&&!d.totp_required){showLocked();throw new Error("Locked")}if(!r.ok)throw new Error(typeof d.detail=="string"?d.detail:(d.detail&&d.detail.error)||r.status);return d}
+function showLocked(){T="";$("app").hidden=true;$("login").hidden=false;$("list").innerHTML="";$("au").textContent="";$("p").value="";clearInterval(tick)}
+async function auth(k){try{const d=await j("/"+k,{method:"POST",body:JSON.stringify({username:$("u").value,password:$("p").value,totp:$("t").value||null})});
+ T=d.token;$("p").value="";$("who").textContent=$("u").value;$("login").hidden=true;$("app").hidden=false;$("msg").textContent="";load();tickStart()}catch(e){$("msg").textContent=e.message}}
+function tickStart(){clearInterval(tick);tick=setInterval(async()=>{try{$("left").textContent=(await j("/session")).seconds_left}catch(e){}},2000)}
+async function lock(){await j("/lock",{method:"POST"}).catch(()=>{});showLocked()}
+async function gen(){$("ep").value=(await j("/generate",{method:"POST",body:"{}"})).password;meter()}
+async function meter(){const d=await j("/strength",{method:"POST",body:JSON.stringify({password:$("ep").value})});$("m").textContent=d.label+" ("+d.entropy_bits+" bits)"}
+async function add(){try{await j("/entries",{method:"POST",body:JSON.stringify({site:$("s").value,username:$("eu").value,password:$("ep").value,notes:$("no").value,tags:$("tg").value.split(",").map(x=>x.trim()).filter(Boolean)})});$("ep").value="";load()}catch(e){$("msg").textContent=e.message}}
+async function load(){try{const d=await j("/entries?q="+encodeURIComponent($("q").value));$("list").innerHTML=d.map(x=>`<tr><td>${esc(x.site)}</td><td>${esc(x.username)}</td><td>${x.strength}</td><td><button onclick=copy(${x.id})>Copy pw</button><button onclick=del(${x.id})>✕</button></td></tr>`).join("")}catch(e){}}
+const esc=s=>String(s).replace(/[&<>"']/g,c=>({"&":"&amp;","<":"&lt;",">":"&gt;",'"':"&quot;","'":"&#39;"}[c]));
+async function copy(id){const d=await j("/entries/"+id);await navigator.clipboard.writeText(d.password);$("msg").textContent="Copied; clipboard cleared in 20s";setTimeout(()=>navigator.clipboard.writeText(""),20000)}
+async function del(id){if(confirm("Delete?")){await j("/entries/"+id,{method:"DELETE"});load()}}
+async function aud(){$("au").textContent=(await j("/audit")).map(a=>`${a.ts}  ${a.action}  ${a.detail}`).join("\n")}
+async function ver(){alert(JSON.stringify(await j("/audit/verify")))}
+</script>
